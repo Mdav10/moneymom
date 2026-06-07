@@ -1,113 +1,46 @@
 #!/usr/bin/env python3
 """
-MoneyMom - Real BIF 10,000 Counterfeit Note Generator
-Authorized Government Use Only - Burundi Movement
+MoneyMom - REAL BIF 10,000 Note Platform
+Uses actual scanned note images
 """
 
 from flask import Flask, request, render_template_string, send_file, session, redirect, url_for
-from PIL import Image, ImageDraw, ImageFont
 import io
 import sqlite3
-import hashlib
 import datetime
 import os
 import secrets
 import base64
-import time
-import random
+from PIL import Image
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = secrets.token_hex(32)
 
-# Database setup
+# Load your real note images
+with open('bif_front.jpg', 'rb') as f:
+    FRONT_IMG_BASE64 = base64.b64encode(f.read()).decode()
+with open('bif_back.jpg', 'rb') as f:
+    BACK_IMG_BASE64 = base64.b64encode(f.read()).decode()
+
 def init_db():
     conn = sqlite3.connect('moneymom.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users
-                 (id INTEGER PRIMARY KEY, 
-                  username TEXT UNIQUE, 
-                  password TEXT, 
-                  ip TEXT, 
-                  created TEXT,
-                  is_admin INTEGER DEFAULT 0)''')
+                 (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT, ip TEXT, created TEXT, is_admin INTEGER DEFAULT 0)''')
     c.execute('''CREATE TABLE IF NOT EXISTS notes
-                 (id INTEGER PRIMARY KEY,
-                  user_id INTEGER,
-                  serial_number TEXT UNIQUE,
-                  image_blob TEXT,
-                  created TEXT)''')
+                 (id INTEGER PRIMARY KEY, user_id INTEGER, serial_number TEXT, front_img TEXT, back_img TEXT, created TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS logs
-                 (id INTEGER PRIMARY KEY,
-                  user_id INTEGER,
-                  action TEXT,
-                  ip TEXT,
-                  created TEXT)''')
+                 (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, ip TEXT, created TEXT)''')
     
-    # Create admin user
     admin_pass = generate_password_hash("08800Mpc+_+")
     c.execute("SELECT * FROM users WHERE username=?", ("Mpc",))
     if not c.fetchone():
         c.execute("INSERT INTO users (username, password, ip, created, is_admin) VALUES (?, ?, ?, ?, ?)",
                   ("Mpc", admin_pass, "0.0.0.0", datetime.datetime.now().isoformat(), 1))
-    
     conn.commit()
     conn.close()
-
-# Generate realistic serial number matching real BIF format
-def generate_serial(user_id):
-    # Format: EJ + 6 digits + year (like EJ6272023 from your image)
-    year = datetime.datetime.now().year
-    digits = str(random.randint(100000, 999999))
-    serial = f"EJ{digits}{year}"
-    return serial[:15]
-
-# Create note using real templates
-def create_note_image(serial, user_id, username):
-    # Load real templates
-    front_path = "bif_front.jpg"
-    back_path = "bif_back.jpg"
-    
-    # If files don't exist, use fallback
-    if not os.path.exists(front_path):
-        front = Image.new('RGB', (800, 400), color=(200, 180, 100))
-    else:
-        front = Image.open(front_path)
-        front = front.convert('RGB')
-    
-    if not os.path.exists(back_path):
-        back = Image.new('RGB', (800, 400), color=(180, 160, 80))
-    else:
-        back = Image.open(back_path)
-        back = back.convert('RGB')
-    
-    # Resize to reasonable dimensions
-    front = front.resize((850, 400))
-    back = back.resize((850, 400))
-    
-    # Add serial number to front
-    draw_front = ImageDraw.Draw(front)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
-    except:
-        font = ImageFont.load_default()
-    
-    # Position serial where it appears on real note (adjust as needed)
-    draw_front.text((270, 330), serial, fill=(0, 0, 0), font=font)
-    
-    # Add invisible forensic marker (for tracking)
-    forensic = f"GOV-BDI-{user_id}-{username}-{int(time.time())}"
-    forensic_font = ImageFont.load_default()
-    draw_front.text((5, 5), forensic, fill=(245, 235, 175), font=forensic_font)
-    
-    # Combine front and back vertically (front on top, back below)
-    total_height = front.height + back.height
-    combined = Image.new('RGB', (front.width, total_height), (255, 255, 255))
-    combined.paste(front, (0, 0))
-    combined.paste(back, (0, front.height))
-    
-    return combined
 
 def log_action(user_id, action, ip):
     conn = sqlite3.connect('moneymom.db')
@@ -129,34 +62,21 @@ def login_required(f):
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
-<head>
-    <title>MoneyMom | Premium Bills Supply</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); font-family: 'Courier New', monospace; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
-        .container { background: rgba(0, 0, 0, 0.85); border-radius: 20px; padding: 40px; width: 400px; border: 1px solid #00ff41; box-shadow: 0 0 30px rgba(0, 255, 65, 0.2); }
-        h1 { color: #00ff41; text-align: center; font-size: 32px; margin-bottom: 10px; letter-spacing: 5px; }
-        .sub { color: #00ff41; text-align: center; font-size: 12px; margin-bottom: 30px; opacity: 0.7; }
-        input { width: 100%; padding: 12px; margin: 10px 0; background: #0a0a0a; border: 1px solid #00ff41; color: #00ff41; font-family: monospace; font-size: 14px; border-radius: 5px; }
-        input:focus { outline: none; border-color: #ff00ff; }
-        button { width: 100%; padding: 12px; background: #00ff41; color: #000; border: none; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 5px; margin-top: 10px; }
-        button:hover { background: #ff00ff; color: #fff; }
-        a { color: #00ff41; text-decoration: none; display: block; text-align: center; margin-top: 20px; }
-        .error { color: #ff4444; text-align: center; margin-top: 10px; }
-    </style>
+<head><title>MoneyMom</title>
+<style>body{background:#0a0a0a;color:#0f0;font-family:monospace;text-align:center;padding:50px;}
+input{background:#222;color:#0f0;border:1px solid #0f0;padding:10px;margin:10px;width:200px;}
+button{background:#0f0;color:#000;padding:10px 20px;border:none;cursor:pointer;}</style>
 </head>
 <body>
-    <div class="container">
-        <h1>MONEYMOM</h1>
-        <div class="sub">Premium Bills Supply</div>
-        <form method="POST">
-            <input type="text" name="username" placeholder="USERNAME" required>
-            <input type="password" name="password" placeholder="PASSWORD" required>
-            <button type="submit">ACCESS</button>
-        </form>
-        <a href="/register">[ NO ACCOUNT? REGISTER ]</a>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    </div>
+<h1>MONEYMOM</h1>
+<h2>Premium Bills Supply - BIF 10,000</h2>
+<form method="POST">
+<input type="text" name="username" placeholder="Username" required><br>
+<input type="password" name="password" placeholder="Password" required><br>
+<button type="submit">Login</button>
+</form>
+<a href="/register" style="color:#0f0;">Register</a>
+{% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
 </body>
 </html>
 '''
@@ -164,32 +84,21 @@ LOGIN_TEMPLATE = '''
 REGISTER_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
-<head>
-    <title>MoneyMom | Register</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); font-family: 'Courier New', monospace; min-height: 100vh; display: flex; justify-content: center; align-items: center; }
-        .container { background: rgba(0, 0, 0, 0.85); border-radius: 20px; padding: 40px; width: 400px; border: 1px solid #00ff41; }
-        h1 { color: #00ff41; text-align: center; margin-bottom: 30px; }
-        input { width: 100%; padding: 12px; margin: 10px 0; background: #0a0a0a; border: 1px solid #00ff41; color: #00ff41; }
-        button { width: 100%; padding: 12px; background: #00ff41; color: #000; font-weight: bold; cursor: pointer; }
-        a { color: #00ff41; text-decoration: none; display: block; text-align: center; margin-top: 20px; }
-        .error { color: #ff4444; text-align: center; }
-        .success { color: #00ff41; text-align: center; }
-    </style>
+<head><title>MoneyMom - Register</title>
+<style>body{background:#0a0a0a;color:#0f0;font-family:monospace;text-align:center;padding:50px;}
+input{background:#222;color:#0f0;border:1px solid #0f0;padding:10px;margin:10px;width:200px;}
+button{background:#0f0;color:#000;padding:10px 20px;border:none;cursor:pointer;}</style>
 </head>
 <body>
-    <div class="container">
-        <h1>REGISTER</h1>
-        <form method="POST">
-            <input type="text" name="username" placeholder="USERNAME" required>
-            <input type="password" name="password" placeholder="PASSWORD" required>
-            <button type="submit">CREATE ACCOUNT</button>
-        </form>
-        <a href="/login">[ BACK TO LOGIN ]</a>
-        {% if error %}<div class="error">{{ error }}</div>{% endif %}
-        {% if success %}<div class="success">{{ success }}</div>{% endif %}
-    </div>
+<h1>Register</h1>
+<form method="POST">
+<input type="text" name="username" placeholder="Username" required><br>
+<input type="password" name="password" placeholder="Password" required><br>
+<button type="submit">Create Account</button>
+</form>
+<a href="/login">Back to Login</a>
+{% if error %}<p style="color:red;">{{ error }}</p>{% endif %}
+{% if success %}<p style="color:#0f0;">{{ success }}</p>{% endif %}
 </body>
 </html>
 '''
@@ -197,56 +106,26 @@ REGISTER_TEMPLATE = '''
 DASHBOARD_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
-<head>
-    <title>MoneyMom | Dashboard</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); font-family: 'Courier New', monospace; padding: 20px; }
-        .header { background: rgba(0, 0, 0, 0.85); border-bottom: 1px solid #00ff41; padding: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
-        .logo { color: #00ff41; font-size: 24px; font-weight: bold; }
-        .user { color: #00ff41; }
-        .logout { color: #ff4444; text-decoration: none; margin-left: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .generate-box { background: rgba(0, 0, 0, 0.85); border: 1px solid #00ff41; border-radius: 10px; padding: 30px; text-align: center; margin-bottom: 30px; }
-        .generate-btn { background: #00ff41; color: #000; padding: 15px 40px; font-size: 18px; font-weight: bold; border: none; cursor: pointer; border-radius: 5px; }
-        .generate-btn:hover { background: #ff00ff; color: #fff; }
-        .notes-list { background: rgba(0, 0, 0, 0.85); border: 1px solid #00ff41; border-radius: 10px; padding: 20px; }
-        .note-item { border-bottom: 1px solid #333; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
-        .note-serial { color: #00ff41; }
-        .note-date { color: #888; font-size: 12px; }
-        .note-actions a { color: #00ff41; text-decoration: none; margin-left: 15px; }
-        h2 { color: #00ff41; margin-bottom: 20px; }
-    </style>
+<head><title>MoneyMom</title>
+<style>body{background:#0a0a0a;color:#0f0;font-family:monospace;padding:20px;}
+.note{border:1px solid #0f0;margin:20px 0;padding:10px;}
+button{background:#0f0;color:#000;padding:10px 20px;border:none;cursor:pointer;}
+a{color:#0f0;}</style>
 </head>
 <body>
-    <div class="header">
-        <div class="logo">MONEYMOM</div>
-        <div class="user">{{ username }} <a href="/logout" class="logout">[EXIT]</a></div>
-    </div>
-    <div class="container">
-        <div class="generate-box">
-            <form method="POST" action="/generate">
-                <button type="submit" class="generate-btn">⚡ GENERATE 10,000 BIF NOTE ⚡</button>
-            </form>
-        </div>
-        <div class="notes-list">
-            <h2>📋 YOUR GENERATED NOTES</h2>
-            {% for note in notes %}
-            <div class="note-item">
-                <div>
-                    <div class="note-serial">🔹 SERIAL: {{ note.2 }}</div>
-                    <div class="note-date">📅 {{ note.4 }}</div>
-                </div>
-                <div class="note-actions">
-                    <a href="/view/{{ note.0 }}">👁️ VIEW</a>
-                    <a href="/download/{{ note.0 }}">⬇️ DOWNLOAD</a>
-                </div>
-            </div>
-            {% else %}
-            <div style="color: #888; text-align: center; padding: 40px;">No notes generated yet.</div>
-            {% endfor %}
-        </div>
-    </div>
+<h1>MoneyMom</h1>
+<p>Welcome, {{ username }}</p>
+<form method="POST" action="/generate"><button type="submit">GENERATE BIF 10,000 NOTE</button></form>
+<h2>Your Notes</h2>
+{% for note in notes %}
+<div class="note">
+<p>Note ID: {{ note.0 }}</p>
+<p>Created: {{ note.5 }}</p>
+<a href="/view/{{ note.0 }}">View Note (Front & Back)</a> | 
+<a href="/download/{{ note.0 }}">Download as PNG</a>
+</div>
+{% endfor %}
+<p><a href="/logout">Logout</a></p>
 </body>
 </html>
 '''
@@ -254,49 +133,26 @@ DASHBOARD_TEMPLATE = '''
 ADMIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
-<head>
-    <title>MoneyMom | Admin</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%); font-family: 'Courier New', monospace; padding: 20px; }
-        .header { background: rgba(0, 0, 0, 0.85); border-bottom: 1px solid #ff00ff; padding: 20px; margin-bottom: 30px; }
-        .logo { color: #ff00ff; font-size: 24px; }
-        .section { background: rgba(0, 0, 0, 0.85); border: 1px solid #ff00ff; border-radius: 10px; padding: 20px; margin-bottom: 30px; }
-        h2 { color: #ff00ff; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #333; padding: 10px; text-align: left; color: #00ff41; }
-        th { background: rgba(255, 0, 255, 0.2); color: #ff00ff; }
-        .logout { color: #ff4444; text-decoration: none; float: right; }
-    </style>
+<head><title>MoneyMom Admin</title>
+<style>body{background:#0a0a0a;color:#0f0;font-family:monospace;padding:20px;}
+table{border-collapse:collapse;width:100%;}
+th,td{border:1px solid #0f0;padding:8px;}</style>
 </head>
 <body>
-    <div class="header">
-        <div class="logo">MONEYMOM | ADMIN <a href="/logout" class="logout">[EXIT]</a></div>
-    </div>
-    <div class="section">
-        <h2>👥 USERS</h2>
-        <table> <tr><th>ID</th><th>Username</th><th>IP</th><th>Admin</th><th>Created</th></tr>
-        {% for u in users %}
-        <tr><td>{{ u.0 }}</td><td>{{ u.1 }}</td><td>{{ u.3 }}</td><td>{% if u.6 == 1 %}✅{% else %}❌{% endif %}</td><td>{{ u.4 }}</td></tr>
-        {% endfor %}
-        </table>
-    </div>
-    <div class="section">
-        <h2>💰 NOTES</h2>
-        <table> <tr><th>ID</th><th>User ID</th><th>Serial</th><th>Created</th></tr>
-        {% for n in notes %}
-        <tr><td>{{ n.0 }}</td><td>{{ n.1 }}</td><td>{{ n.2 }}</td><td>{{ n.4 }}</td></tr>
-        {% endfor %}
-        </table>
-    </div>
-    <div class="section">
-        <h2>📜 LOGS</h2>
-        <table> <tr><th>Time</th><th>User ID</th><th>Action</th><th>IP</th></tr>
-        {% for l in logs %}
-        <tr><td>{{ l.4 }}</td><td>{{ l.1 }}</td><td>{{ l.2 }}</td><td>{{ l.3 }}</td></tr>
-        {% endfor %}
-        </table>
-    </div>
+<h1>Admin Panel</h1>
+<h2>Users</h2>
+<table><tr><th>ID</th><th>Username</th><th>IP</th><th>Created</th></tr>
+{% for u in users %}<tr><td>{{ u.0 }}</td><td>{{ u.1 }}</td><td>{{ u.3 }}</td><td>{{ u.4 }}</td></tr>{% endfor %}
+</table>
+<h2>Generated Notes</h2>
+<table><tr><th>ID</th><th>User ID</th><th>Created</th></tr>
+{% for n in notes %}<tr><td>{{ n.0 }}</td><td>{{ n.1 }}</td><td>{{ n.5 }}</td></tr>{% endfor %}
+</table>
+<h2>Logs</h2>
+<table><tr><th>Time</th><th>User ID</th><th>Action</th><th>IP</th></tr>
+{% for l in logs %}<tr><td>{{ l.4 }}</td><td>{{ l.1 }}</td><td>{{ l.2 }}</td><td>{{ l.3 }}</td></tr>{% endfor %}
+</table>
+<p><a href="/logout">Logout</a></p>
 </body>
 </html>
 '''
@@ -329,8 +185,6 @@ def login():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
-    error = None
-    success = None
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -341,12 +195,12 @@ def register():
             c.execute("INSERT INTO users (username, password, ip, created, is_admin) VALUES (?, ?, ?, ?, ?)",
                       (username, hashed, request.remote_addr, datetime.datetime.now().isoformat(), 0))
             conn.commit()
-            success = "Account created! Please login."
+            return render_template_string(REGISTER_TEMPLATE, success="Account created! Please login.")
         except:
-            error = "Username exists"
+            return render_template_string(REGISTER_TEMPLATE, error="Username exists")
         finally:
             conn.close()
-    return render_template_string(REGISTER_TEMPLATE, error=error, success=success)
+    return render_template_string(REGISTER_TEMPLATE)
 
 @app.route('/dashboard')
 @login_required
@@ -362,19 +216,17 @@ def dashboard():
 @login_required
 def generate():
     user_id = session['user_id']
-    username = session['username']
-    serial = generate_serial(user_id)
-    img = create_note_image(serial, user_id, username)
-    buffered = io.BytesIO()
-    img.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+    serial = f"EJ{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+    
     conn = sqlite3.connect('moneymom.db')
     c = conn.cursor()
-    c.execute("INSERT INTO notes (user_id, serial_number, image_blob, created) VALUES (?, ?, ?, ?)",
-              (user_id, serial, img_base64, datetime.datetime.now().isoformat()))
+    c.execute("INSERT INTO notes (user_id, serial_number, front_img, back_img, created) VALUES (?, ?, ?, ?, ?)",
+              (user_id, serial, FRONT_IMG_BASE64, BACK_IMG_BASE64, datetime.datetime.now().isoformat()))
+    note_id = c.lastrowid
     conn.commit()
     conn.close()
-    log_action(user_id, f"Generated: {serial}", request.remote_addr)
+    
+    log_action(user_id, f"Generated note: {serial}", request.remote_addr)
     return redirect(url_for('dashboard'))
 
 @app.route('/view/<int:note_id>')
@@ -382,12 +234,25 @@ def generate():
 def view_note(note_id):
     conn = sqlite3.connect('moneymom.db')
     c = conn.cursor()
-    c.execute("SELECT image_blob, user_id FROM notes WHERE id=?", (note_id,))
+    c.execute("SELECT front_img, back_img, user_id FROM notes WHERE id=?", (note_id,))
     note = c.fetchone()
     conn.close()
-    if note and note[1] == session['user_id']:
-        img_data = base64.b64decode(note[0])
-        return send_file(io.BytesIO(img_data), mimetype='image/png')
+    if note and note[2] == session['user_id']:
+        return f'''
+        <!DOCTYPE html>
+        <html>
+        <head><title>BIF 10,000 Note</title>
+        <style>body{{background:#333;display:flex;flex-direction:column;align-items:center;padding:20px;}}
+        img{{max-width:90%;margin:10px;border:1px solid gold;}}</style>
+        </head>
+        <body>
+        <h1 style="color:#0f0;">BIF 10,000 Francs</h1>
+        <img src="data:image/jpeg;base64,{note[0]}"><br>
+        <img src="data:image/jpeg;base64,{note[1]}">
+        <p><a href="/dashboard">Back</a></p>
+        </body>
+        </html>
+        '''
     return "Not found", 404
 
 @app.route('/download/<int:note_id>')
@@ -395,12 +260,21 @@ def view_note(note_id):
 def download(note_id):
     conn = sqlite3.connect('moneymom.db')
     c = conn.cursor()
-    c.execute("SELECT image_blob, user_id FROM notes WHERE id=?", (note_id,))
+    c.execute("SELECT front_img, back_img, user_id FROM notes WHERE id=?", (note_id,))
     note = c.fetchone()
     conn.close()
-    if note and note[1] == session['user_id']:
-        img_data = base64.b64decode(note[0])
-        return send_file(io.BytesIO(img_data), mimetype='image/png', as_attachment=True, download_name=f'BIF_10000_{note_id}.png')
+    if note and note[2] == session['user_id']:
+        from PIL import Image
+        import base64
+        front = Image.open(io.BytesIO(base64.b64decode(note[0])))
+        back = Image.open(io.BytesIO(base64.b64decode(note[1])))
+        total_width = front.width * 2
+        combined = Image.new('RGB', (total_width, front.height))
+        combined.paste(front, (0, 0))
+        combined.paste(back, (front.width, 0))
+        buffered = io.BytesIO()
+        combined.save(buffered, format="PNG")
+        return send_file(io.BytesIO(buffered.getvalue()), mimetype='image/png', as_attachment=True, download_name=f'BIF_10000_{note_id}.png')
     return "Not found", 404
 
 @app.route('/admin')
@@ -418,12 +292,14 @@ def admin():
 
 @app.route('/logout')
 def logout():
-    if 'user_id' in session:
-        log_action(session['user_id'], "Logout", request.remote_addr)
     session.clear()
     return redirect(url_for('login'))
 
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5000))
+    print("="*50)
+    print("MoneyMom RUNNING with REAL note images")
+    print("Admin: Mpc / 08800Mpc+_+")
+    print("="*50)
     app.run(host='0.0.0.0', port=port, debug=False)
